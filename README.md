@@ -80,6 +80,24 @@ This is an **enhanced version** of the Trello MCP Server that provides comprehen
    }
    ```
 
+### Remote deployment (Claude, Cloud Run)
+
+The server can run over HTTP for remote clients like Claude:
+
+1. **Deploy to GCP Cloud Run:**
+   ```powershell
+   $env:TRELLO_API_KEY = "your_key"
+   $env:TRELLO_API_TOKEN = "your_token"
+   .\build.ps1
+   ```
+
+2. **Connect Claude:**
+   ```bash
+   claude mcp add --transport http trello https://<your-cloud-run-url>/mcp
+   ```
+
+Share the Cloud Run URL (e.g. `https://trello-mcp-server-xxxxx-ew.a.run.app`) plus the path `/mcp` with clients.
+
 ## 🛠️ Available Tools
 
 ### 📋 **Lists Management (9 tools)**
