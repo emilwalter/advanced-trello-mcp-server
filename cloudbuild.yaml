@@ -22,9 +22,7 @@ steps:
       - 'managed'
       - '--allow-unauthenticated'
       - '--set-env-vars'
-      - 'TRELLO_API_KEY=${_TRELLO_API_KEY}'
-      - '--set-env-vars'
-      - 'TRELLO_API_TOKEN=${_TRELLO_API_TOKEN}'
+      - 'TRELLO_API_KEY=${_TRELLO_API_KEY},TRELLO_API_TOKEN=${_TRELLO_API_TOKEN},MCP_ACCESS_TOKEN=${_MCP_ACCESS_TOKEN}'
 
 images:
   - 'gcr.io/${PROJECT_ID}/trello-mcp-server'
@@ -32,6 +30,7 @@ images:
 substitutions:
   _TRELLO_API_KEY: ''
   _TRELLO_API_TOKEN: ''
+  _MCP_ACCESS_TOKEN: ''
 
 options:
   substitutionOption: 'ALLOW_LOOSE'

@@ -98,6 +98,48 @@ The server can run over HTTP for remote clients like Claude:
 
 Share the Cloud Run URL (e.g. `https://trello-mcp-server-xxxxx-ew.a.run.app`) plus the path `/mcp` with clients.
 
+### Restricting access (only your team)
+
+To allow only specific people to use the server, set `MCP_ACCESS_TOKEN` when deploying:
+
+```powershell
+$env:MCP_ACCESS_TOKEN = "your-secret-token-here"  # e.g. a long random string
+.\build.ps1
+```
+
+Then give your team the **token** and **URL**. They configure Cursor with headers:
+
+```json
+{
+  "mcpServers": {
+    "trello": {
+      "url": "https://trello-mcp-server-xxxxx-ew.a.run.app/sse",
+      "headers": {
+        "Authorization": "Bearer your-secret-token-here"
+      }
+    }
+  }
+}
+```
+
+Or use an env var so the token isn't in the config file:
+
+```json
+"headers": {
+  "Authorization": "Bearer ${env:TRELLO_MCP_TOKEN}"
+}
+```
+
+**Claude (Code / Desktop):** Use the `--header` flag when adding the server:
+
+```bash
+claude mcp add --transport http --header "Authorization: Bearer your-secret-token-here" trello https://trello-mcp-server-xxxxx-ew.a.run.app/mcp
+```
+
+For Claude Desktop's `claude_desktop_config.json`, use the same `url` + `headers` format as Cursor above (path `/mcp` for Claude, `/sse` for Cursor).
+
+Without the correct token, requests return 401 Unauthorized.
+
 ## 🛠️ Available Tools
 
 ### 📋 **Lists Management (9 tools)**

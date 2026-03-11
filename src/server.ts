@@ -17,18 +17,28 @@ const credentials = {
 const app = express();
 app.use(express.json({ limit: '10mb' }));
 
+// Optional shared-secret auth: if MCP_ACCESS_TOKEN is set, require it on MCP endpoints
+const mcpAccessToken = process.env.MCP_ACCESS_TOKEN;
+const requireAuth = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+	if (!mcpAccessToken) return next();
+	const auth = req.headers.authorization;
+	const token = auth?.startsWith('Bearer ') ? auth.slice(7) : req.headers['x-mcp-token'];
+	if (token === mcpAccessToken) return next();
+	res.status(401).json({ error: 'Unauthorized. Provide Authorization: Bearer <token> or X-MCP-Token header.' });
+};
+
 // Cloud Run health check
 app.get('/_ah/health', (_req, res) => {
 	res.status(200).send('OK');
 });
 
-// MCP endpoints - remote clients connect here
-app.post('/mcp', statelessHandler(() => createTrelloMcpServer(credentials)));
+// MCP endpoints - remote clients connect here (protected when MCP_ACCESS_TOKEN is set)
+app.post('/mcp', requireAuth, statelessHandler(() => createTrelloMcpServer(credentials)));
 
-// SSE endpoint - Cursor expects /sse for remote MCP
+// SSE endpoint - Cursor expects /sse for remote MCP (protected when MCP_ACCESS_TOKEN is set)
 const sse = sseHandlers(() => createTrelloMcpServer(credentials), {});
-app.get('/sse', sse.getHandler);
-app.post('/messages', sse.postHandler);
+app.get('/sse', requireAuth, sse.getHandler);
+app.post('/messages', requireAuth, sse.postHandler);
 
 app.get('/', (_req, res) => {
 	res.json({
