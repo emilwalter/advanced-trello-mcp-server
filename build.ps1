@@ -45,11 +45,25 @@ if ($missing.Count -gt 0) {
 Write-Host "Setting the GCP project to $projectID..." -ForegroundColor Cyan
 gcloud config set project $projectID
 
-# Optional: restrict access to your team (set MCP_ACCESS_TOKEN to require Bearer token)
+# Build substitutions for Cloud Run env vars
 $subs = "_TRELLO_API_KEY=$env:TRELLO_API_KEY,_TRELLO_API_TOKEN=$env:TRELLO_API_TOKEN"
+
+# OAuth for Claude.ai Connectors
+$baseUrl = if ($env:BASE_URL) { $env:BASE_URL } else { "https://trello-mcp-server-690360192847.europe-west1.run.app" }
+$subs += ",_BASE_URL=$baseUrl"
+
 if ($env:MCP_ACCESS_TOKEN) {
     $subs += ",_MCP_ACCESS_TOKEN=$env:MCP_ACCESS_TOKEN"
     Write-Host "MCP_ACCESS_TOKEN set - only users with the token can connect." -ForegroundColor Yellow
+}
+
+# Redis for OAuth token storage (required for Claude Connectors)
+if ($env:REDIS_HOST) {
+    $redisPort = if ($env:REDIS_PORT) { $env:REDIS_PORT } else { "6379" }
+    $subs += ",_REDIS_HOST=$env:REDIS_HOST,_REDIS_PORT=$redisPort,_REDIS_PASSWORD=$env:REDIS_PASSWORD"
+    Write-Host "Redis configured for OAuth token storage." -ForegroundColor Green
+} else {
+    Write-Host "WARNING: REDIS_HOST not set. OAuth tokens will use in-memory storage (single instance only)." -ForegroundColor Yellow
 }
 
 # Submit the Cloud Build

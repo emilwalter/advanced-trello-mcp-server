@@ -22,7 +22,7 @@ steps:
       - 'managed'
       - '--allow-unauthenticated'
       - '--set-env-vars'
-      - 'TRELLO_API_KEY=${_TRELLO_API_KEY},TRELLO_API_TOKEN=${_TRELLO_API_TOKEN},MCP_ACCESS_TOKEN=${_MCP_ACCESS_TOKEN}'
+      - 'TRELLO_API_KEY=${_TRELLO_API_KEY},TRELLO_API_TOKEN=${_TRELLO_API_TOKEN},MCP_ACCESS_TOKEN=${_MCP_ACCESS_TOKEN},BASE_URL=${_BASE_URL},REDIS_HOST=${_REDIS_HOST},REDIS_PORT=${_REDIS_PORT},REDIS_PASSWORD=${_REDIS_PASSWORD}'
 
 images:
   - 'gcr.io/${PROJECT_ID}/trello-mcp-server'
@@ -31,6 +31,10 @@ substitutions:
   _TRELLO_API_KEY: ''
   _TRELLO_API_TOKEN: ''
   _MCP_ACCESS_TOKEN: ''
+  _BASE_URL: 'https://trello-mcp-server-690360192847.europe-west1.run.app'
+  _REDIS_HOST: ''
+  _REDIS_PORT: '6379'
+  _REDIS_PASSWORD: ''
 
 options:
   substitutionOption: 'ALLOW_LOOSE'
