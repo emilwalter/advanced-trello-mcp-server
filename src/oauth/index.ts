@@ -75,21 +75,24 @@ export function createOAuthRouter(config: OAuthConfig): express.Router {
 			res.status(400).send('Missing code_challenge (PKCE required)');
 			return;
 		}
-		// Store for callback - we need to redirect back to Claude's callback with our code
+		// Store for callback - we need to redirect back to Claude's callback with our code.
+		// Trello does NOT echo back query params, so we must embed state in return_url.
 		const stateData = JSON.stringify({
 			redirect_uri,
 			code_challenge,
 			code_challenge_method: code_challenge_method || 'S256',
 			state: state || '',
 		});
+		const returnUrl = new URL(config.redirectUri);
+		returnUrl.searchParams.set('state', stateData);
+
 		const trelloAuthUrl = new URL(TRELLO_AUTH_URL);
 		trelloAuthUrl.searchParams.set('key', config.trelloApiKey);
 		trelloAuthUrl.searchParams.set('scope', 'read,write');
 		trelloAuthUrl.searchParams.set('expiration', 'never');
 		trelloAuthUrl.searchParams.set('response_type', 'token');
-		trelloAuthUrl.searchParams.set('return_url', config.redirectUri);
+		trelloAuthUrl.searchParams.set('return_url', returnUrl.toString());
 		trelloAuthUrl.searchParams.set('callback_method', 'fragment');
-		trelloAuthUrl.searchParams.set('state', stateData);
 		res.redirect(trelloAuthUrl.toString());
 	});
 
