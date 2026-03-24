@@ -1,6 +1,9 @@
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { TrelloCredentials } from '../types/common.js';
+import { fetchWithRetry } from '../utils/api.js';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 
 /**
  * Register all Cards API tools
@@ -14,22 +17,33 @@ export function registerCardsTools(server: McpServer, credentials: TrelloCredent
 			name: z.string().describe('Name of the card'),
 			description: z.string().optional().describe('Description of the card'),
 			listId: z.string().describe('ID of the list to create the card in'),
+			due: z
+				.string()
+				.optional()
+				.describe(
+					'Due date in ISO 8601 format (e.g. 2025-03-12 or 2025-03-12T18:30:00.000Z). Per Trello API docs. Optional.'
+				),
+			start: z.string().optional().describe('Start date in ISO 8601 format. Optional.'),
 		},
-		async ({ name, description, listId }) => {
+		async ({ name, description, listId, due, start }) => {
 			try {
-				const response = await fetch(
+				const body: Record<string, unknown> = {
+					name,
+					desc: description || '',
+					idList: listId,
+					pos: 'bottom',
+				};
+				if (due) body.due = due;
+				if (start) body.start = start;
+
+				const response = await fetchWithRetry(
 					`https://api.trello.com/1/cards?key=${credentials.apiKey}&token=${credentials.apiToken}`,
 					{
 						method: 'POST',
 						headers: {
 							'Content-Type': 'application/json',
 						},
-						body: JSON.stringify({
-							name,
-							desc: description || '',
-							idList: listId,
-							pos: 'bottom',
-						}),
+						body: JSON.stringify(body),
 					}
 				);
 				const data = await response.json();
@@ -64,6 +78,8 @@ export function registerCardsTools(server: McpServer, credentials: TrelloCredent
 					name: z.string().describe('Name of the card'),
 					description: z.string().optional().describe('Description of the card'),
 					listId: z.string().describe('ID of the list to create the card in'),
+					due: z.string().optional().describe('Due date in ISO 8601. Optional.'),
+					start: z.string().optional().describe('Start date in ISO 8601. Optional.'),
 				})
 			),
 		},
@@ -71,19 +87,23 @@ export function registerCardsTools(server: McpServer, credentials: TrelloCredent
 			try {
 				const results = await Promise.all(
 					cards.map(async (card) => {
-						const response = await fetch(
+						const body: Record<string, unknown> = {
+							name: card.name,
+							desc: card.description || '',
+							idList: card.listId,
+							pos: 'bottom',
+						};
+						if (card.due) body.due = card.due;
+						if (card.start) body.start = card.start;
+
+						const response = await fetchWithRetry(
 							`https://api.trello.com/1/cards?key=${credentials.apiKey}&token=${credentials.apiToken}`,
 							{
 								method: 'POST',
 								headers: {
 									'Content-Type': 'application/json',
 								},
-								body: JSON.stringify({
-									name: card.name,
-									desc: card.description || '',
-									idList: card.listId,
-									pos: 'bottom',
-								}),
+								body: JSON.stringify(body),
 							}
 						);
 						return await response.json();
@@ -149,7 +169,7 @@ export function registerCardsTools(server: McpServer, credentials: TrelloCredent
 					};
 				}
 
-				const response = await fetch(
+				const response = await fetchWithRetry(
 					`https://api.trello.com/1/cards/${cardId}?key=${credentials.apiKey}&token=${credentials.apiToken}`,
 					{
 						method: 'PUT',
@@ -204,7 +224,7 @@ export function registerCardsTools(server: McpServer, credentials: TrelloCredent
 					};
 				}
 
-				const response = await fetch(
+				const response = await fetchWithRetry(
 					`https://api.trello.com/1/cards/${cardId}?key=${credentials.apiKey}&token=${credentials.apiToken}`,
 					{
 						method: 'PUT',
@@ -268,7 +288,7 @@ export function registerCardsTools(server: McpServer, credentials: TrelloCredent
 
 				const results = await Promise.all(
 					cards.map(async (card) => {
-						const response = await fetch(
+						const response = await fetchWithRetry(
 							`https://api.trello.com/1/cards/${card.cardId}?key=${credentials.apiKey}&token=${credentials.apiToken}`,
 							{
 								method: 'PUT',
@@ -327,7 +347,7 @@ export function registerCardsTools(server: McpServer, credentials: TrelloCredent
 					};
 				}
 
-				const response = await fetch(
+				const response = await fetchWithRetry(
 					`https://api.trello.com/1/cards/${cardId}/actions/comments?key=${credentials.apiKey}&token=${credentials.apiToken}`,
 					{
 						method: 'POST',
@@ -389,7 +409,7 @@ export function registerCardsTools(server: McpServer, credentials: TrelloCredent
 
 				const results = await Promise.all(
 					comments.map(async (comment) => {
-						const response = await fetch(
+						const response = await fetchWithRetry(
 							`https://api.trello.com/1/cards/${comment.cardId}/actions/comments?key=${credentials.apiKey}&token=${credentials.apiToken}`,
 							{
 								method: 'POST',
@@ -452,7 +472,7 @@ export function registerCardsTools(server: McpServer, credentials: TrelloCredent
 				url.searchParams.append('token', credentials.apiToken);
 				if (limit) url.searchParams.append('limit', limit.toString());
 
-				const response = await fetch(url.toString());
+				const response = await fetchWithRetry(url.toString());
 				const data = await response.json();
 				return {
 					content: [
@@ -496,7 +516,7 @@ export function registerCardsTools(server: McpServer, credentials: TrelloCredent
 					};
 				}
 
-				const response = await fetch(
+				const response = await fetchWithRetry(
 					`https://api.trello.com/1/cards/${cardId}?key=${credentials.apiKey}&token=${credentials.apiToken}`,
 					{
 						method: 'PUT',
@@ -553,7 +573,7 @@ export function registerCardsTools(server: McpServer, credentials: TrelloCredent
 
 				const results = await Promise.all(
 					cardIds.map(async (cardId) => {
-						const response = await fetch(
+						const response = await fetchWithRetry(
 							`https://api.trello.com/1/cards/${cardId}?key=${credentials.apiKey}&token=${credentials.apiToken}`,
 							{
 								method: 'PUT',
@@ -589,4 +609,190 @@ export function registerCardsTools(server: McpServer, credentials: TrelloCredent
 			}
 		}
 	);
-} 
+
+	// GET /cards/{id}/attachments - List card attachments
+	server.tool(
+		'get-card-attachments',
+		{
+			cardId: z.string().describe('ID of the card to get attachments from'),
+		},
+		async ({ cardId }) => {
+			try {
+				if (!credentials.apiKey || !credentials.apiToken) {
+					return { content: [{ type: 'text' as const, text: 'Trello API credentials are not configured' }], isError: true };
+				}
+
+				const url = new URL(`https://api.trello.com/1/cards/${cardId}/attachments`);
+				url.searchParams.append('key', credentials.apiKey);
+				url.searchParams.append('token', credentials.apiToken);
+
+				const response = await fetchWithRetry(url.toString());
+				const attachments = await response.json();
+
+				// Also fetch comments to map attachments to comments
+				const actionsUrl = new URL(`https://api.trello.com/1/cards/${cardId}/actions`);
+				actionsUrl.searchParams.append('key', credentials.apiKey);
+				actionsUrl.searchParams.append('token', credentials.apiToken);
+				actionsUrl.searchParams.append('filter', 'commentCard');
+
+				const actionsResponse = await fetchWithRetry(actionsUrl.toString());
+				const comments = await actionsResponse.json();
+
+				// Map attachment URLs mentioned in comments
+				const attachmentCommentMap: Record<string, string> = {};
+				for (const comment of comments) {
+					const text: string = comment.data?.text || '';
+					for (const att of attachments) {
+						if (text.includes(att.name) || text.includes(att.id)) {
+							attachmentCommentMap[att.id] = text;
+						}
+					}
+				}
+
+				const summary = attachments.map((att: any) => ({
+					id: att.id,
+					name: att.name,
+					mimeType: att.mimeType,
+					bytes: att.bytes,
+					date: att.date,
+					isUpload: att.isUpload,
+					url: att.url,
+					commentContext: attachmentCommentMap[att.id] || null,
+				}));
+
+				return { content: [{ type: 'text' as const, text: JSON.stringify(summary, null, 2) }] };
+			} catch (error) {
+				return { content: [{ type: 'text' as const, text: `Error getting attachments: ${error}` }], isError: true };
+			}
+		}
+	);
+
+	// Download all image attachments from a card to a local folder
+	server.tool(
+		'download-card-attachments',
+		{
+			cardId: z.string().describe('ID of the card to download attachments from'),
+			savePath: z.string().describe('Local directory path to save attachments to'),
+			imagesOnly: z.boolean().optional().describe('Only download image files (default: true)'),
+		},
+		async ({ cardId, savePath, imagesOnly = true }) => {
+			try {
+				if (!credentials.apiKey || !credentials.apiToken) {
+					return { content: [{ type: 'text' as const, text: 'Trello API credentials are not configured' }], isError: true };
+				}
+
+				// Fetch card info
+				const cardUrl = new URL(`https://api.trello.com/1/cards/${cardId}`);
+				cardUrl.searchParams.append('key', credentials.apiKey);
+				cardUrl.searchParams.append('token', credentials.apiToken);
+				cardUrl.searchParams.append('fields', 'name,desc,shortUrl');
+				const cardResponse = await fetchWithRetry(cardUrl.toString());
+				const card = await cardResponse.json();
+
+				// Fetch attachments
+				const attUrl = new URL(`https://api.trello.com/1/cards/${cardId}/attachments`);
+				attUrl.searchParams.append('key', credentials.apiKey);
+				attUrl.searchParams.append('token', credentials.apiToken);
+				const attResponse = await fetchWithRetry(attUrl.toString());
+				const attachments = await attResponse.json();
+
+				// Fetch comments for context
+				const actionsUrl = new URL(`https://api.trello.com/1/cards/${cardId}/actions`);
+				actionsUrl.searchParams.append('key', credentials.apiKey);
+				actionsUrl.searchParams.append('token', credentials.apiToken);
+				actionsUrl.searchParams.append('filter', 'commentCard');
+				const actionsResponse = await fetchWithRetry(actionsUrl.toString());
+				const comments = await actionsResponse.json();
+
+				// Filter to images if needed
+				const IMAGE_MIMES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml', 'image/bmp'];
+				const filtered = imagesOnly
+					? attachments.filter((a: any) => a.mimeType && IMAGE_MIMES.includes(a.mimeType))
+					: attachments;
+
+				if (filtered.length === 0) {
+					return { content: [{ type: 'text' as const, text: `No ${imagesOnly ? 'image ' : ''}attachments found on card "${card.name}"` }] };
+				}
+
+				// Ensure output directory
+				await fs.mkdir(savePath, { recursive: true });
+
+				// Download each attachment
+				const manifest: Array<{
+					file: string;
+					originalName: string;
+					mimeType: string;
+					bytes: number;
+					date: string;
+					commentContext: string | null;
+				}> = [];
+
+				// OAuth header for Trello file downloads (query params return 401)
+				const authHeader = `OAuth oauth_consumer_key="${credentials.apiKey}", oauth_token="${credentials.apiToken}"`;
+
+				for (let i = 0; i < filtered.length; i++) {
+					const att = filtered[i];
+
+					const fileResponse = await fetchWithRetry(att.url, {
+						headers: { 'Authorization': authHeader },
+					});
+					const buffer = Buffer.from(await fileResponse.arrayBuffer());
+
+					// Sanitize filename: {index}-{original_name}
+					const baseName = att.name.replace(/[^a-zA-Z0-9а-яА-ЯёЁ._-]/g, '_');
+					const fileName = `${String(i + 1).padStart(2, '0')}-${baseName}`;
+					const filePath = path.join(savePath, fileName);
+
+					await fs.writeFile(filePath, buffer);
+
+					// Find comment context
+					let commentContext: string | null = null;
+					for (const comment of comments) {
+						const text: string = comment.data?.text || '';
+						if (text.includes(att.name) || text.includes(att.id)) {
+							commentContext = text;
+							break;
+						}
+					}
+
+					manifest.push({
+						file: fileName,
+						originalName: att.name,
+						mimeType: att.mimeType,
+						bytes: buffer.length,
+						date: att.date,
+						commentContext,
+					});
+				}
+
+				// Write manifest
+				const manifestData = {
+					card: { id: cardId, name: card.name, description: card.desc, url: card.shortUrl },
+					downloadedAt: new Date().toISOString(),
+					files: manifest,
+				};
+				await fs.writeFile(
+					path.join(savePath, '_manifest.json'),
+					JSON.stringify(manifestData, null, 2),
+					'utf-8'
+				);
+
+				return {
+					content: [{
+						type: 'text' as const,
+						text: JSON.stringify({
+							savedTo: savePath,
+							card: card.name,
+							filesDownloaded: manifest.length,
+							files: manifest.map(m => ({ file: m.file, mimeType: m.mimeType, bytes: m.bytes, commentContext: m.commentContext })),
+						}, null, 2),
+					}],
+				};
+			} catch (error) {
+				return { content: [{ type: 'text' as const, text: `Error downloading attachments: ${error}` }], isError: true };
+			}
+		}
+	);
+}
+
+ 

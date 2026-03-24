@@ -9,6 +9,7 @@ import { registerCardsTools } from './tools/cards.js';
 import { registerLabelsTools } from './tools/labels.js';
 import { registerActionsTools } from './tools/actions.js';
 import { TrelloCredentials } from './types/common.js';
+import { fetchWithRetry } from './utils/api.js';
 
 export function createTrelloMcpServer(credentials: TrelloCredentials): McpServer {
 	const server = new McpServer({
@@ -20,7 +21,7 @@ export function createTrelloMcpServer(credentials: TrelloCredentials): McpServer
 
 	// Resources
 	server.resource('boards', 'trello://boards', async (uri) => {
-		const response = await fetch(
+		const response = await fetchWithRetry(
 			`https://api.trello.com/1/members/me/boards?key=${trelloApiKey}&token=${trelloApiToken}`
 		);
 		const data = await response.json();
@@ -33,7 +34,7 @@ export function createTrelloMcpServer(credentials: TrelloCredentials): McpServer
 		'lists',
 		new ResourceTemplate('trello://boards/{boardId}/lists', { list: undefined }),
 		async (uri, { boardId }) => {
-			const response = await fetch(
+			const response = await fetchWithRetry(
 				`https://api.trello.com/1/boards/${boardId}/lists?key=${trelloApiKey}&token=${trelloApiToken}`
 			);
 			const data = await response.json();
@@ -47,7 +48,7 @@ export function createTrelloMcpServer(credentials: TrelloCredentials): McpServer
 		'cards',
 		new ResourceTemplate('trello://lists/{listId}/cards', { list: undefined }),
 		async (uri, { listId }) => {
-			const response = await fetch(
+			const response = await fetchWithRetry(
 				`https://api.trello.com/1/lists/${listId}/cards?key=${trelloApiKey}&token=${trelloApiToken}`
 			);
 			const data = await response.json();
