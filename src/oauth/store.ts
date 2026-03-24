@@ -6,7 +6,8 @@ import crypto from 'node:crypto';
 import Redis from 'ioredis';
 
 const CODE_TTL_SEC = 10 * 60; // 10 minutes
-const TOKEN_TTL_SEC = 24 * 60 * 60; // 24 hours
+/** MCP access token lifetime (Redis / memory). Trello user token uses expiration=never. */
+export const TOKEN_TTL_SEC = 30 * 24 * 60 * 60; // 30 days
 
 const PREFIX_AUTH_CODE = 'mcp:oauth:code:';
 const PREFIX_ACCESS_TOKEN = 'mcp:oauth:token:';

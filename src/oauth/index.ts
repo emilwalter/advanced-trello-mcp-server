@@ -12,6 +12,7 @@ import {
 	consumeAuthCode,
 	storeAccessToken,
 	getTrelloTokenForAccessToken,
+	TOKEN_TTL_SEC,
 } from './store.js';
 
 const TRELLO_AUTH_URL = 'https://trello.com/1/authorize';
@@ -222,7 +223,7 @@ export function createOAuthRouter(config: OAuthConfig): express.Router {
 		res.json({
 			access_token: accessToken,
 			token_type: 'Bearer',
-			expires_in: 86400, // 24 hours
+			expires_in: TOKEN_TTL_SEC,
 		});
 	});
 

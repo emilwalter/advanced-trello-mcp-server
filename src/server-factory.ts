@@ -8,6 +8,8 @@ import { registerListsTools } from './tools/lists.js';
 import { registerCardsTools } from './tools/cards.js';
 import { registerLabelsTools } from './tools/labels.js';
 import { registerActionsTools } from './tools/actions.js';
+import { registerSearchTools } from './tools/search.js';
+import { registerCustomFieldsTools } from './tools/custom-fields.js';
 import { TrelloCredentials } from './types/common.js';
 import { fetchWithRetry } from './utils/api.js';
 
@@ -64,6 +66,8 @@ export function createTrelloMcpServer(credentials: TrelloCredentials): McpServer
 	registerCardsTools(server, credentials);
 	registerLabelsTools(server, credentials);
 	registerActionsTools(server, credentials);
+	registerSearchTools(server, credentials);
+	registerCustomFieldsTools(server, credentials);
 
 	return server;
 }

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { TrelloCredentials } from '../types/common.js';
-import { fetchWithRetry } from '../utils/api.js';
+import { fetchWithRetry, trelloGet, trelloPost } from '../utils/api.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -791,6 +791,46 @@ export function registerCardsTools(server: McpServer, credentials: TrelloCredent
 			} catch (error) {
 				return { content: [{ type: 'text' as const, text: `Error downloading attachments: ${error}` }], isError: true };
 			}
+		}
+	);
+
+	// GET /cards/{id} - Full card with custom fields, checklists, attachments; optional comments
+	server.tool(
+		'get-card',
+		{
+			cardId: z.string().describe('Card ID or short link'),
+			includeComments: z
+				.boolean()
+				.optional()
+				.describe('Include comment actions (default: false)'),
+		},
+		async ({ cardId, includeComments = false }) => {
+			const params: Record<string, string> = {
+				customFieldItems: 'true',
+				checklists: 'all',
+				attachments: 'true',
+				fields: 'name,desc,idList,idBoard,labels,due,dueComplete,shortUrl,closed,pos',
+			};
+			if (includeComments) {
+				params.actions = 'commentCard';
+				params.actions_limit = '50';
+			}
+			return trelloGet(`/cards/${cardId}`, credentials, params);
+		}
+	);
+
+	// POST /cards/{id}/attachments - Add URL attachment (e.g. linked Trello card)
+	server.tool(
+		'add-attachment',
+		{
+			cardId: z.string().describe('ID of the card'),
+			url: z.string().min(1).describe('URL to attach (e.g. https://trello.com/c/...)'),
+			name: z.string().optional().describe('Optional display name for the attachment'),
+		},
+		async ({ cardId, url, name }) => {
+			const body: Record<string, string> = { url };
+			if (name !== undefined) body.name = name;
+			return trelloPost(`/cards/${cardId}/attachments`, credentials, body);
 		}
 	);
 }

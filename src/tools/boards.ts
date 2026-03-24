@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { TrelloCredentials } from '../types/common.js';
-import { fetchWithRetry } from '../utils/api.js';
+import { fetchWithRetry, trelloGet } from '../utils/api.js';
 
 /**
  * Register all Boards API tools
@@ -81,8 +81,40 @@ export function registerBoardsTools(server: McpServer, credentials: TrelloCreden
 		}
 	);
 
+	// GET /boards/{id} - Board with lists, custom field definitions; optional open cards
+	server.tool(
+		'get-board',
+		{
+			boardId: z.string().describe('Board ID'),
+			includeCards: z
+				.boolean()
+				.optional()
+				.describe('Include open cards with custom field values (default: false)'),
+			cardFields: z
+				.string()
+				.optional()
+				.describe(
+					'Comma-separated card fields when includeCards is true (default: name,desc,idList,labels,due,shortUrl)'
+				),
+		},
+		async ({ boardId, includeCards = false, cardFields }) => {
+			const params: Record<string, string> = {
+				fields: 'name,desc,url',
+				lists: 'open',
+				list_fields: 'name,pos',
+				customFields: 'true',
+			};
+			if (includeCards) {
+				const cf = cardFields || 'name,desc,idList,labels,due,shortUrl';
+				params.cards = 'open';
+				params.card_fields = cf;
+				params.card_customFieldItems = 'true';
+			}
+			return trelloGet(`/boards/${boardId}`, credentials, params);
+		}
+	);
+
 	// TODO: Add more boards tools
-	// - get-board: Get detailed board information
 	// - update-board: Update board properties
 	// - create-board: Create new board
 	// - get-board-cards: Get cards from board

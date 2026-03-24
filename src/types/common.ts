@@ -7,6 +7,8 @@ export interface TrelloApiResponse<T = any> {
 		text: string;
 	}>;
 	isError?: boolean;
+	/** Satisfies MCP `server.tool` callback return structural typing */
+	[key: string]: unknown;
 }
 
 // Common error response
