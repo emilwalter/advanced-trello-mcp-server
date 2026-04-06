@@ -17,7 +17,7 @@ console.log('🔨 Building project...\n');
 try {
   // Step 1: Compile TypeScript
   console.log('📦 Compiling TypeScript...');
-  execSync('tsc', { stdio: 'inherit' });
+  execSync('npx tsc', { stdio: 'inherit', cwd: path.join(__dirname, '..') });
   console.log('✅ TypeScript compilation successful\n');
 
   // Step 2: Add shebang to index.js

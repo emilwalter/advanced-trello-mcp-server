@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { TrelloCredentials } from '../types/common.js';
-import { fetchWithRetry, trelloGet, trelloPost } from '../utils/api.js';
+import { fetchWithRetry, trelloGet, trelloPost, trelloPut, trelloDelete } from '../utils/api.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -131,136 +131,58 @@ export function registerCardsTools(server: McpServer, credentials: TrelloCredent
 		}
 	);
 
-	// PUT /cards/{id} - Update a card (description, name, or both)
+	// PUT /cards/{id} - Update a card
 	server.tool(
 		'update-card',
 		{
 			cardId: z.string().describe('ID of the card to update'),
 			description: z.string().optional().describe('New description for the card (replaces existing). Use empty string to clear.'),
 			name: z.string().optional().describe('New name/title for the card'),
+			due: z.string().nullable().optional().describe('Due date ISO 8601 (e.g. "2025-06-15T10:00:00.000Z"). Pass null to remove.'),
+			dueComplete: z.boolean().optional().describe('Whether the due date is complete'),
+			idMembers: z.array(z.string()).optional().describe('Member IDs to assign. Replaces current members.'),
 		},
-		async ({ cardId, description, name }) => {
-			try {
-				if (!credentials.apiKey || !credentials.apiToken) {
-					return {
-						content: [
-							{
-								type: 'text',
-								text: 'Trello API credentials are not configured',
-							},
-						],
-						isError: true,
-					};
-				}
+		async ({ cardId, description, name, due, dueComplete, idMembers }) => {
+			const body: Record<string, unknown> = {};
+			if (description !== undefined) body.desc = description;
+			if (name !== undefined) body.name = name;
+			if (due !== undefined) body.due = due;
+			if (dueComplete !== undefined) body.dueComplete = dueComplete;
+			if (idMembers !== undefined) body.idMembers = idMembers;
 
-				const body: { desc?: string; name?: string } = {};
-				if (description !== undefined) body.desc = description;
-				if (name !== undefined) body.name = name;
-
-				if (Object.keys(body).length === 0) {
-					return {
-						content: [
-							{
-								type: 'text',
-								text: 'At least one of description or name must be provided',
-							},
-						],
-						isError: true,
-					};
-				}
-
-				const response = await fetchWithRetry(
-					`https://api.trello.com/1/cards/${cardId}?key=${credentials.apiKey}&token=${credentials.apiToken}`,
-					{
-						method: 'PUT',
-						headers: {
-							'Content-Type': 'application/json',
-						},
-						body: JSON.stringify(body),
-					}
-				);
-				const data = await response.json();
+			if (Object.keys(body).length === 0) {
 				return {
 					content: [
 						{
 							type: 'text',
-							text: JSON.stringify(data),
-						},
-					],
-				};
-			} catch (error) {
-				return {
-					content: [
-						{
-							type: 'text',
-							text: `Error updating card: ${error}`,
+							text: 'At least one field must be provided (name, description, due, dueComplete, idMembers)',
 						},
 					],
 					isError: true,
 				};
 			}
+
+			return trelloPut(`/cards/${cardId}`, credentials, body);
 		}
 	);
 
-	// PUT /cards/{id}/idList - Move card to another list
+	// PUT /cards/{id} - Move card to another list (optionally cross-board)
 	server.tool(
 		'move-card',
 		{
 			cardId: z.string().describe('ID of the card to move'),
 			listId: z.string().describe('ID of the destination list'),
+			boardId: z.string().optional().describe('ID of the destination board (for cross-board moves). listId must belong to this board.'),
 			position: z.string().optional().describe('Position in the list (e.g. "top", "bottom")'),
 		},
-		async ({ cardId, listId, position = 'bottom' }) => {
-			try {
-				if (!credentials.apiKey || !credentials.apiToken) {
-					return {
-						content: [
-							{
-								type: 'text',
-								text: 'Trello API credentials are not configured',
-							},
-						],
-						isError: true,
-					};
-				}
-
-				const response = await fetchWithRetry(
-					`https://api.trello.com/1/cards/${cardId}?key=${credentials.apiKey}&token=${credentials.apiToken}`,
-					{
-						method: 'PUT',
-						headers: {
-							'Content-Type': 'application/json',
-						},
-						body: JSON.stringify({
-							idList: listId,
-							pos: position,
-						}),
-					}
-				);
-				const data = await response.json();
-				return {
-					content: [
-						{
-							type: 'text',
-							text: JSON.stringify(data),
-						},
-					],
-				};
-			} catch (error) {
-				return {
-					content: [
-						{
-							type: 'text',
-							text: `Error moving card: ${error}`,
-						},
-					],
-					isError: true,
-				};
-			}
+		async ({ cardId, listId, boardId, position = 'bottom' }) => {
+			const body: Record<string, unknown> = { idList: listId, pos: position };
+			if (boardId) body.idBoard = boardId;
+			return trelloPut(`/cards/${cardId}`, credentials, body);
 		}
 	);
 
-	// PUT /cards - Move multiple cards
+	// PUT /cards - Move multiple cards (optionally cross-board)
 	server.tool(
 		'move-cards',
 		{
@@ -268,6 +190,7 @@ export function registerCardsTools(server: McpServer, credentials: TrelloCredent
 				z.object({
 					cardId: z.string().describe('ID of the card to move'),
 					listId: z.string().describe('ID of the destination list'),
+					boardId: z.string().optional().describe('ID of the destination board (for cross-board moves)'),
 					position: z.string().optional().describe('Position in the list (e.g. "top", "bottom")'),
 				})
 			),
@@ -288,20 +211,12 @@ export function registerCardsTools(server: McpServer, credentials: TrelloCredent
 
 				const results = await Promise.all(
 					cards.map(async (card) => {
-						const response = await fetchWithRetry(
-							`https://api.trello.com/1/cards/${card.cardId}?key=${credentials.apiKey}&token=${credentials.apiToken}`,
-							{
-								method: 'PUT',
-								headers: {
-									'Content-Type': 'application/json',
-								},
-								body: JSON.stringify({
-									idList: card.listId,
-									pos: card.position || 'bottom',
-								}),
-							}
-						);
-						return await response.json();
+						const body: Record<string, unknown> = {
+							idList: card.listId,
+							pos: card.position || 'bottom',
+						};
+						if (card.boardId) body.idBoard = card.boardId;
+						return trelloPut(`/cards/${card.cardId}`, credentials, body);
 					})
 				);
 				return {
@@ -831,6 +746,59 @@ export function registerCardsTools(server: McpServer, credentials: TrelloCredent
 			const body: Record<string, string> = { url };
 			if (name !== undefined) body.name = name;
 			return trelloPost(`/cards/${cardId}/attachments`, credentials, body);
+		}
+	);
+
+	// DELETE /cards/{id}/attachments/{idAttachment} - Remove an attachment from a card
+	server.tool(
+		'delete-attachment',
+		{
+			cardId: z.string().describe('ID of the card'),
+			attachmentId: z.string().describe('ID of the attachment to delete'),
+		},
+		async ({ cardId, attachmentId }) => {
+			return trelloDelete(`/cards/${cardId}/attachments/${attachmentId}`, credentials);
+		}
+	);
+
+	// PUT /cards/{id} closed:false - Reopen an archived card
+	server.tool(
+		'unarchive-card',
+		{
+			cardId: z.string().describe('ID of the card to unarchive/reopen'),
+		},
+		async ({ cardId }) => {
+			return trelloPut(`/cards/${cardId}`, credentials, { closed: false });
+		}
+	);
+
+	// PUT /cards - Unarchive multiple cards
+	server.tool(
+		'unarchive-cards',
+		{
+			cardIds: z.array(z.string()).describe('IDs of the cards to unarchive/reopen'),
+		},
+		async ({ cardIds }) => {
+			try {
+				if (!credentials.apiKey || !credentials.apiToken) {
+					return {
+						content: [{ type: 'text', text: 'Trello API credentials are not configured' }],
+						isError: true,
+					};
+				}
+
+				const results = await Promise.all(
+					cardIds.map(cardId => trelloPut(`/cards/${cardId}`, credentials, { closed: false }))
+				);
+				return {
+					content: [{ type: 'text', text: JSON.stringify(results) }],
+				};
+			} catch (error) {
+				return {
+					content: [{ type: 'text', text: `Error unarchiving cards: ${error}` }],
+					isError: true,
+				};
+			}
 		}
 	);
 }
