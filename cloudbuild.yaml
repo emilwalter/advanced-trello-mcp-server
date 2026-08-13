@@ -21,20 +21,14 @@ steps:
       - '--platform'
       - 'managed'
       - '--allow-unauthenticated'
-      - '--set-env-vars'
-      - 'TRELLO_API_KEY=${_TRELLO_API_KEY},TRELLO_API_TOKEN=${_TRELLO_API_TOKEN},MCP_ACCESS_TOKEN=${_MCP_ACCESS_TOKEN},BASE_URL=${_BASE_URL},REDIS_HOST=${_REDIS_HOST},REDIS_PORT=${_REDIS_PORT},REDIS_PASSWORD=${_REDIS_PASSWORD}'
+      # No --set-env-vars: a deploy without env flags inherits the env vars of the
+      # current revision. Passing them here meant that a build submitted without
+      # substitutions silently wiped TRELLO_API_KEY / TRELLO_API_TOKEN /
+      # MCP_ACCESS_TOKEN / REDIS_* on the live service. Manage them in the Cloud Run
+      # console, or with an explicit `gcloud run services update --update-env-vars`.
 
 images:
   - 'gcr.io/${PROJECT_ID}/trello-mcp-server'
-
-substitutions:
-  _TRELLO_API_KEY: ''
-  _TRELLO_API_TOKEN: ''
-  _MCP_ACCESS_TOKEN: ''
-  _BASE_URL: 'https://trello-mcp-server-690360192847.europe-west1.run.app'
-  _REDIS_HOST: ''
-  _REDIS_PORT: '6379'
-  _REDIS_PASSWORD: ''
 
 options:
   substitutionOption: 'ALLOW_LOOSE'
