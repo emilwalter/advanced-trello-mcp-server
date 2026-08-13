@@ -5,6 +5,102 @@ import { fetchWithRetry, trelloGet, trelloPost, trelloPut, trelloDelete } from '
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+// ── Attachment content helpers ───────────────────────────────────────
+// Used by read-card-attachment, which returns file content in the tool
+// response instead of writing it to the server filesystem.
+
+const DEFAULT_MAX_ATTACHMENT_BYTES = 2 * 1024 * 1024; // 2 MiB
+const HARD_MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024; // 5 MiB — base64 inflates the payload ~33%
+
+// Image types an MCP client can render directly from an image content block
+const VIEWABLE_IMAGE_MIMES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+
+const TEXT_MIMES = [
+	'application/json',
+	'application/xml',
+	'application/xhtml+xml',
+	'application/javascript',
+	'application/x-yaml',
+	'application/yaml',
+	'application/sql',
+	'image/svg+xml',
+];
+
+const EXTENSION_MIMES: Record<string, string> = {
+	'.pdf': 'application/pdf',
+	'.txt': 'text/plain',
+	'.md': 'text/markdown',
+	'.csv': 'text/csv',
+	'.json': 'application/json',
+	'.xml': 'application/xml',
+	'.html': 'text/html',
+	'.png': 'image/png',
+	'.jpg': 'image/jpeg',
+	'.jpeg': 'image/jpeg',
+	'.gif': 'image/gif',
+	'.webp': 'image/webp',
+	'.svg': 'image/svg+xml',
+};
+
+function normalizeMime(value: string | null | undefined): string {
+	return (value || '').toLowerCase().split(';')[0].trim();
+}
+
+function isTextMime(mimeType: string): boolean {
+	return (
+		mimeType.startsWith('text/') ||
+		TEXT_MIMES.includes(mimeType) ||
+		mimeType.endsWith('+json') ||
+		mimeType.endsWith('+xml')
+	);
+}
+
+function mimeFromFileName(name: string | undefined): string {
+	const ext = path.extname(name || '').toLowerCase();
+	return EXTENSION_MIMES[ext] || '';
+}
+
+/**
+ * Fetch an attachment's bytes. Trello upload URLs need an OAuth-style
+ * Authorization header, and may redirect to a signed storage URL that
+ * rejects that header — so it is dropped on non-Trello hops.
+ */
+async function fetchAttachmentBinary(
+	url: string,
+	authHeader: string
+): Promise<{ buffer: Buffer; contentType: string | null }> {
+	let currentUrl = url;
+	let useAuth = new URL(url).hostname.endsWith('trello.com');
+
+	for (let hop = 0; hop < 4; hop++) {
+		const response = await fetchWithRetry(
+			currentUrl,
+			useAuth ? { headers: { Authorization: authHeader } } : undefined
+		);
+
+		if (response.status >= 300 && response.status < 400) {
+			const location = response.headers.get('location');
+			if (!location) {
+				throw new Error(`HTTP ${response.status} with no Location header`);
+			}
+			currentUrl = new URL(location, currentUrl).toString();
+			useAuth = new URL(currentUrl).hostname.endsWith('trello.com');
+			continue;
+		}
+
+		if (!response.ok) {
+			throw new Error(`HTTP ${response.status} fetching attachment content`);
+		}
+
+		return {
+			buffer: Buffer.from(await response.arrayBuffer()),
+			contentType: response.headers.get('content-type'),
+		};
+	}
+
+	throw new Error('Too many redirects while fetching attachment content');
+}
+
 /**
  * Register all Cards API tools
  * Based on https://developer.atlassian.com/cloud/trello/rest/api-group-cards/
@@ -705,6 +801,155 @@ export function registerCardsTools(server: McpServer, credentials: TrelloCredent
 				};
 			} catch (error) {
 				return { content: [{ type: 'text' as const, text: `Error downloading attachments: ${error}` }], isError: true };
+			}
+		}
+	);
+
+	// GET /cards/{id}/attachments/{idAttachment} - Return the attachment CONTENT in the response
+	// (no server-side filesystem write, so the calling client actually receives the file)
+	server.tool(
+		'read-card-attachment',
+		{
+			cardId: z.string().describe('ID or short link of the card the attachment belongs to'),
+			attachmentId: z.string().describe('ID of the attachment (from get-card-attachments)'),
+			maxBytes: z
+				.number()
+				.optional()
+				.describe(
+					`Maximum size to return in bytes (default ${DEFAULT_MAX_ATTACHMENT_BYTES}, hard cap ${HARD_MAX_ATTACHMENT_BYTES})`
+				),
+			asText: z
+				.boolean()
+				.optional()
+				.describe('Force UTF-8 text decoding even when the MIME type looks binary (default: false)'),
+		},
+		async ({ cardId, attachmentId, maxBytes, asText = false }) => {
+			try {
+				if (!credentials.apiKey || !credentials.apiToken) {
+					return { content: [{ type: 'text' as const, text: 'Trello API credentials are not configured' }], isError: true };
+				}
+
+				const limit = Math.min(
+					Math.max(1, maxBytes ?? DEFAULT_MAX_ATTACHMENT_BYTES),
+					HARD_MAX_ATTACHMENT_BYTES
+				);
+
+				// Attachment metadata (name, mimeType, bytes, download url)
+				const metaUrl = new URL(`https://api.trello.com/1/cards/${cardId}/attachments/${attachmentId}`);
+				metaUrl.searchParams.append('key', credentials.apiKey);
+				metaUrl.searchParams.append('token', credentials.apiToken);
+
+				const metaResponse = await fetchWithRetry(metaUrl.toString());
+				if (!metaResponse.ok) {
+					return {
+						content: [{
+							type: 'text' as const,
+							text: `Error reading attachment ${attachmentId} on card ${cardId}: HTTP ${metaResponse.status}`,
+						}],
+						isError: true,
+					};
+				}
+				const att = await metaResponse.json();
+
+				if (!att?.url) {
+					return {
+						content: [{ type: 'text' as const, text: `Attachment ${attachmentId} has no downloadable URL` }],
+						isError: true,
+					};
+				}
+
+				// Pre-flight on the declared size so oversized files are never downloaded
+				const declaredBytes = typeof att.bytes === 'number' ? att.bytes : null;
+				if (declaredBytes !== null && declaredBytes > limit) {
+					return {
+						content: [{
+							type: 'text' as const,
+							text: JSON.stringify({
+								error: 'attachment-too-large',
+								id: att.id,
+								name: att.name,
+								mimeType: att.mimeType,
+								bytes: declaredBytes,
+								limit,
+								hint: `Raise maxBytes (hard cap ${HARD_MAX_ATTACHMENT_BYTES}) or use download-card-attachments`,
+							}, null, 2),
+						}],
+						isError: true,
+					};
+				}
+
+				const authHeader = `OAuth oauth_consumer_key="${credentials.apiKey}", oauth_token="${credentials.apiToken}"`;
+				const { buffer, contentType } = await fetchAttachmentBinary(att.url, authHeader);
+
+				// Trello does not always report bytes, so re-check what actually arrived
+				if (buffer.length > limit) {
+					return {
+						content: [{
+							type: 'text' as const,
+							text: JSON.stringify({
+								error: 'attachment-too-large',
+								id: att.id,
+								name: att.name,
+								bytes: buffer.length,
+								limit,
+								hint: `Raise maxBytes (hard cap ${HARD_MAX_ATTACHMENT_BYTES}) or use download-card-attachments`,
+							}, null, 2),
+						}],
+						isError: true,
+					};
+				}
+
+				const mimeType =
+					normalizeMime(att.mimeType) ||
+					normalizeMime(contentType) ||
+					mimeFromFileName(att.name) ||
+					'application/octet-stream';
+
+				const meta = {
+					cardId,
+					id: att.id,
+					name: att.name,
+					mimeType,
+					bytes: buffer.length,
+					date: att.date,
+					isUpload: att.isUpload,
+					url: att.url,
+				};
+
+				if (asText || isTextMime(mimeType)) {
+					return {
+						content: [
+							{ type: 'text' as const, text: JSON.stringify({ ...meta, encoding: 'utf-8' }, null, 2) },
+							{ type: 'text' as const, text: buffer.toString('utf-8') },
+						],
+					};
+				}
+
+				if (VIEWABLE_IMAGE_MIMES.includes(mimeType)) {
+					return {
+						content: [
+							{ type: 'text' as const, text: JSON.stringify({ ...meta, encoding: 'base64-image' }, null, 2) },
+							{ type: 'image' as const, data: buffer.toString('base64'), mimeType },
+						],
+					};
+				}
+
+				return {
+					content: [{
+						type: 'text' as const,
+						text: JSON.stringify({
+							...meta,
+							encoding: 'base64',
+							note:
+								mimeType === 'application/pdf'
+									? 'PDF returned as base64 — the raw string is not readable as text; decode it client-side'
+									: undefined,
+							data: buffer.toString('base64'),
+						}, null, 2),
+					}],
+				};
+			} catch (error) {
+				return { content: [{ type: 'text' as const, text: `Error reading attachment: ${error}` }], isError: true };
 			}
 		}
 	);

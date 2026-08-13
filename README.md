@@ -144,7 +144,7 @@ Without the correct token, requests return 401 Unauthorized.
 - `get-list-actions` / `get-list-board` / `get-list-cards`
 - `archive-all-cards-in-list` / `move-all-cards-in-list`
 
-### 🎯 **Cards (12)**
+### 🎯 **Cards (13)**
 
 - `create-card` — Optional `**due`** and `**start**` (ISO 8601)
 - `create-cards` — Batch create; each card may include `**due**` / `**start**`
@@ -154,7 +154,8 @@ Without the correct token, requests return 401 Unauthorized.
 - `get-tickets-by-list`
 - `archive-card` / `archive-cards`
 - `**get-card-attachments**` — Metadata + `commentContext` (e.g. screenshots on comments)
-- `**download-card-attachments**` — Downloads files to a folder (numbered files + `_manifest.json`). File URLs often require **OAuth-style `Authorization` header** (not query-string key/token); this tool handles that.
+- `**download-card-attachments**` — Downloads files to a folder (numbered files + `_manifest.json`). File URLs often require **OAuth-style `Authorization` header** (not query-string key/token); this tool handles that. ⚠️ Writes to the **filesystem of the machine running the server** — on a remote/Cloud Run deployment the calling client never sees the files; use `read-card-attachment` there.
+- `**read-card-attachment**` — Returns the attachment **content in the response** (no disk write). Text-like types (`text/*`, JSON, XML, SVG) come back decoded as UTF-8; `png` / `jpeg` / `gif` / `webp` as an MCP **image block**; everything else (PDF, DWG, Office…) as **base64**. Size-guarded: `maxBytes` defaults to 2 MiB, hard cap 5 MiB, and the declared size is checked before any download. Optional `asText` forces UTF-8 decoding.
 
 ### 🏷️ **Labels (8)**
 
@@ -235,6 +236,7 @@ Tools follow the [Trello REST API](https://developer.atlassian.com/cloud/trello/
 | Tool not found            | Rebuild (`npm run build`), restart MCP client                                  |
 | `fetch failed` / timeouts | Retry layer should help; sustained 429 → slow down workflows                   |
 | Attachment download 401   | Use `download-card-attachments` (header auth), not raw URL with `?key=&token=` |
+| Attachment saved but unreachable | `download-card-attachments` writes to the *server's* disk. On Cloud Run use `read-card-attachment`, which returns the bytes to the client |
 
 
 ## 📄 License

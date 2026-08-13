@@ -14,7 +14,34 @@ vi.mock('../../utils/api.js', () => {
 	};
 });
 
-import { trelloPut, trelloDelete } from '../../utils/api.js';
+import { fetchWithRetry, trelloPut, trelloDelete } from '../../utils/api.js';
+
+/** Minimal stand-in for a fetch Response, enough for the attachment code paths */
+function mockJsonResponse(body: unknown, status = 200) {
+	return {
+		ok: status >= 200 && status < 300,
+		status,
+		json: () => Promise.resolve(body),
+		headers: new Headers(),
+	};
+}
+
+function mockBinaryResponse(buffer: Buffer, contentType: string, status = 200) {
+	return {
+		ok: status >= 200 && status < 300,
+		status,
+		arrayBuffer: () => Promise.resolve(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)),
+		headers: new Headers({ 'content-type': contentType }),
+	};
+}
+
+function mockRedirectResponse(location: string, status = 302) {
+	return {
+		ok: false,
+		status,
+		headers: new Headers({ location }),
+	};
+}
 
 const credentials: TrelloCredentials = { apiKey: 'test-key', apiToken: 'test-token' };
 
@@ -208,6 +235,116 @@ describe('cards tools', () => {
 				credentials,
 				{ closed: false }
 			);
+		});
+	});
+
+	describe('read-card-attachment', () => {
+		const readAttachment = async (args: Record<string, unknown>) =>
+			(await tools.get('read-card-attachment')!.handler(args)) as unknown as {
+				content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+				isError?: boolean;
+			};
+
+		it('should be registered', () => {
+			expect(tools.has('read-card-attachment')).toBe(true);
+		});
+
+		it('returns text attachments decoded as UTF-8', async () => {
+			vi.mocked(fetchWithRetry)
+				.mockResolvedValueOnce(mockJsonResponse({
+					id: 'att1', name: 'kontrollplan.txt', mimeType: 'text/plain', bytes: 11,
+					url: 'https://api.trello.com/1/cards/c1/attachments/att1/download/kontrollplan.txt',
+				}) as never)
+				.mockResolvedValueOnce(mockBinaryResponse(Buffer.from('Hej Emil ÅÄ'), 'text/plain') as never);
+
+			const result = await readAttachment({ cardId: 'c1', attachmentId: 'att1' });
+
+			expect(result.isError).toBeUndefined();
+			expect(JSON.parse(result.content[0].text!)).toMatchObject({ name: 'kontrollplan.txt', encoding: 'utf-8' });
+			expect(result.content[1].text).toBe('Hej Emil ÅÄ');
+		});
+
+		it('returns images as an image content block', async () => {
+			const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+			vi.mocked(fetchWithRetry)
+				.mockResolvedValueOnce(mockJsonResponse({
+					id: 'att2', name: 'ritning.png', mimeType: 'image/png', bytes: png.length,
+					url: 'https://api.trello.com/1/cards/c1/attachments/att2/download/ritning.png',
+				}) as never)
+				.mockResolvedValueOnce(mockBinaryResponse(png, 'image/png') as never);
+
+			const result = await readAttachment({ cardId: 'c1', attachmentId: 'att2' });
+
+			expect(result.content[1]).toMatchObject({ type: 'image', mimeType: 'image/png', data: png.toString('base64') });
+		});
+
+		it('returns other binary types as base64', async () => {
+			const pdf = Buffer.from('%PDF-1.7 fake');
+			vi.mocked(fetchWithRetry)
+				.mockResolvedValueOnce(mockJsonResponse({
+					id: 'att3', name: 'beslut.pdf', mimeType: 'application/pdf', bytes: pdf.length,
+					url: 'https://api.trello.com/1/cards/c1/attachments/att3/download/beslut.pdf',
+				}) as never)
+				.mockResolvedValueOnce(mockBinaryResponse(pdf, 'application/pdf') as never);
+
+			const result = await readAttachment({ cardId: 'c1', attachmentId: 'att3' });
+			const payload = JSON.parse(result.content[0].text!);
+
+			expect(payload).toMatchObject({ mimeType: 'application/pdf', encoding: 'base64', bytes: pdf.length });
+			expect(Buffer.from(payload.data, 'base64').toString()).toBe('%PDF-1.7 fake');
+		});
+
+		it('refuses oversized attachments without downloading them', async () => {
+			vi.mocked(fetchWithRetry).mockResolvedValueOnce(mockJsonResponse({
+				id: 'att4', name: 'stor-ritning.pdf', mimeType: 'application/pdf', bytes: 9_000_000,
+				url: 'https://api.trello.com/1/cards/c1/attachments/att4/download/stor-ritning.pdf',
+			}) as never);
+
+			const result = await readAttachment({ cardId: 'c1', attachmentId: 'att4' });
+
+			expect(result.isError).toBe(true);
+			expect(JSON.parse(result.content[0].text!)).toMatchObject({ error: 'attachment-too-large' });
+			expect(fetchWithRetry).toHaveBeenCalledTimes(1);
+		});
+
+		it('caps maxBytes at the hard limit', async () => {
+			vi.mocked(fetchWithRetry).mockResolvedValueOnce(mockJsonResponse({
+				id: 'att5', name: 'enorm.pdf', mimeType: 'application/pdf', bytes: 6 * 1024 * 1024,
+				url: 'https://api.trello.com/1/cards/c1/attachments/att5/download/enorm.pdf',
+			}) as never);
+
+			const result = await readAttachment({ cardId: 'c1', attachmentId: 'att5', maxBytes: 50_000_000 });
+
+			expect(result.isError).toBe(true);
+			expect(JSON.parse(result.content[0].text!).limit).toBe(5 * 1024 * 1024);
+		});
+
+		it('follows redirects and drops the auth header off Trello hosts', async () => {
+			const bytes = Buffer.from('signed-storage-body');
+			vi.mocked(fetchWithRetry)
+				.mockResolvedValueOnce(mockJsonResponse({
+					id: 'att6', name: 'detaljplan.dwg', mimeType: '', bytes: bytes.length,
+					url: 'https://api.trello.com/1/cards/c1/attachments/att6/download/detaljplan.dwg',
+				}) as never)
+				.mockResolvedValueOnce(mockRedirectResponse('https://trello-attachments.s3.amazonaws.com/signed') as never)
+				.mockResolvedValueOnce(mockBinaryResponse(bytes, 'application/octet-stream') as never);
+
+			const result = await readAttachment({ cardId: 'c1', attachmentId: 'att6' });
+
+			const firstCallOptions = vi.mocked(fetchWithRetry).mock.calls[1][1] as RequestInit;
+			const redirectCallOptions = vi.mocked(fetchWithRetry).mock.calls[2][1];
+			expect((firstCallOptions.headers as Record<string, string>).Authorization).toContain('oauth_consumer_key');
+			expect(redirectCallOptions).toBeUndefined();
+			expect(JSON.parse(result.content[0].text!).encoding).toBe('base64');
+		});
+
+		it('reports metadata errors', async () => {
+			vi.mocked(fetchWithRetry).mockResolvedValueOnce(mockJsonResponse({}, 404) as never);
+
+			const result = await readAttachment({ cardId: 'c1', attachmentId: 'nope' });
+
+			expect(result.isError).toBe(true);
+			expect(result.content[0].text).toContain('HTTP 404');
 		});
 	});
 
